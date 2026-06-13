@@ -82,6 +82,7 @@ function DropUpSection({ label, count, open, onToggle, children }: {
     <div className="mob-cal-dropup">
       {open && (
         <div className="mob-cal-dropup__content">
+          <div className="mob-cal-list-divider">{label}</div>
           {children}
         </div>
       )}
@@ -186,7 +187,7 @@ export function CalendarListPanel({ events }: Props) {
       <div className="mob-cal-list">{items}</div>
       {upcoming.length > 0 && (
         <DropUpSection
-          label="📆 Upcoming" count={upcoming.length}
+          label="Upcoming" count={upcoming.length}
           open={upcomingOpen} onToggle={() => setUpcomingOpen(o => !o)}
         >
           {renderFlat(upcoming)}

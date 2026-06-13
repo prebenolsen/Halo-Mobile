@@ -521,9 +521,11 @@ html, body, #root {
   background: none;
   border: none;
   cursor: pointer;
-  color: rgba(200,223,240,0.5);
-  font-size: 11px;
-  font-weight: 600;
+  color: #7ee8ff;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   padding: 7px 8px;
   border-radius: 6px;
   transition: background 0.1s, color 0.1s;
@@ -531,7 +533,7 @@ html, body, #root {
 .mob-cal-dropup__toggle:hover,
 .mob-cal-dropup__toggle:active {
   background: rgba(100,200,255,0.05);
-  color: #c8dff0;
+  color: #a8f0ff;
 }
 
 .mob-cal-dropup__count {
@@ -541,8 +543,8 @@ html, body, #root {
   border-radius: 10px;
   padding: 0 5px;
   line-height: 16px;
-  color: rgba(200,223,240,0.5);
-  font-weight: 500;
+  color: #7ee8ff;
+  font-weight: 700;
 }
 
 .mob-cal-dropup__arrow {
