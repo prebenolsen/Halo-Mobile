@@ -15,6 +15,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  deploy-edge-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Set OpenAI secret and deploy enrich-memory
+        run: |
+          supabase secrets set OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+          supabase functions deploy enrich-memory --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
   build:
     runs-on: ubuntu-latest
     steps:
