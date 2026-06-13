@@ -9,10 +9,10 @@ const METADATA_SYSTEM =
   'person_update: use when a named person\'s health, feelings, activities, relationships, or status are described\n' +
   'entities format: [{"type":"person|place|company|product|project","name":"..."}]\n' +
   'importance: 0.1=passing thought, 0.5=useful context, 0.8=significant personal info, 1.0=critical\n' +
-  'event_date: set when the statement references a specific event on a specific date or day (past or future). Resolve relative references using the provided Date (e.g. \'yesterday\' → Date minus 1, \'last Friday\' → compute from Date, \'tomorrow\' → Date plus 1, \'June 20\' → that date in the current or next year). Leave null when no specific date or day is mentioned\n' +
-  'calendar_event: null for general observations and past events. When the statement describes a future or recurring event on a specific date, set to ' +
+  'event_date: set when the statement references a specific event on a specific date or day (past or future). Resolve relative references using the provided Date (e.g. \'yesterday\' → Date minus 1, \'last Friday\' → compute from Date, \'tomorrow\' → Date plus 1, \'June 20\' → that date in the current or next year). For bare day-of-week references without explicit past context (\'last\', \'past\', \'previous\') — e.g. \'Friday\', \'Monday\' — resolve to the NEXT upcoming occurrence of that day (if today is Saturday and the user says \'Friday\', that means next Friday). Leave null when no specific date or day is mentioned\n' +
+  'calendar_event: null only for general observations with no specific event. When the statement describes ANY event (party, gathering, meeting, dinner, appointment, etc.) on a specific date — past OR future — set to ' +
   '{"title":"concise event title","time":null_or_"HH:MM","type":"Birthday|Anniversary|Holiday|Meeting|Reminder|Work|Travel|Health","emoji":"single emoji","recurring":true_if_annual}. ' +
-  'Set recurring=true for birthdays and anniversaries. Use null for past events (yesterday, last week, etc.)\n' +
+  'Set recurring=true for birthdays and anniversaries.\n' +
   'memorable=false for: pure commands, simple factual questions, trivial system interactions\n' +
   'memorable=false for: garbled, nonsensical, fragmentary, or incomplete statements (transcription noise, half sentences, word salad)\n' +
   'memorable=true for: personal observations, updates about named people (health, feelings, activities), preferences, plans, life events, ideas\n' +
@@ -137,15 +137,16 @@ serve(async (req: Request) => {
 
     if (error) throw error
 
-    // Write to calendar_events when the LLM returns a calendar_event object AND resolved a date.
-    // We use calendar_event presence (not memory_types) as the trigger because the LLM reliably
-    // populates calendar_event for future/recurring events even when it omits 'event' from memory_types.
     const cal = meta.calendar_event as Record<string, unknown> | null | undefined
     const hasCal = cal !== null && cal !== undefined && typeof cal === 'object'
     const eventDate = typeof meta.event_date === 'string' ? meta.event_date : null
+    const memoryTypes: string[] = Array.isArray(meta.memory_types) ? meta.memory_types as string[] : []
+    const isEvent = memoryTypes.includes('event')
     let calendarInserted = false
 
-    if (hasCal && eventDate) {
+    // Insert into calendar_events when the LLM returns a calendar_event object, OR when
+    // memory_types includes 'event' and we have a date (fallback for when LLM skips calendar_event).
+    if (eventDate && (hasCal || isEvent)) {
       try {
         const calType = (cal?.type && typeof cal.type === 'string') ? cal.type : 'Meeting'
         const { error: calErr } = await db.from('calendar_events').insert({
