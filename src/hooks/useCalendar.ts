@@ -26,7 +26,7 @@ export function useCalendar() {
           data.map(r => ({
             id: r.id as number,
             title: r.title as string,
-            date: r.date as string,
+            date: (r.date as string).slice(0, 10),
             time: (r.time as string | null) ?? null,
             type: r.type as string,
             emoji: r.emoji as string,
