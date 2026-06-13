@@ -325,7 +325,7 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   font-size: 9px;
-  color: rgba(200,223,240,0.3);
+  color: rgba(100,200,255,0.3);
   min-height: 20px;
 }
 
@@ -339,7 +339,7 @@ html, body, #root {
   text-align: center;
   font-size: 10px;
   font-weight: 500;
-  color: rgba(200,223,240,0.5);
+  color: rgba(100,200,255,0.5);
   padding: 3px 0;
 }
 
@@ -355,7 +355,7 @@ html, body, #root {
 }
 
 .mob-cal-cell--outside .mob-cal-cell__day {
-  color: rgba(200,223,240,0.2);
+  color: rgba(100,200,255,0.2);
 }
 
 .mob-cal-cell--has-event .mob-cal-cell__day {
@@ -385,7 +385,7 @@ html, body, #root {
 .mob-cal-cell__day {
   font-size: 11px;
   font-weight: 500;
-  color: rgba(200,223,240,0.6);
+  color: rgba(100,200,255,0.6);
   line-height: 1.2;
 }
 
@@ -497,7 +497,7 @@ html, body, #root {
 
 .mob-cal-list-item__date {
   font-size: 10px;
-  color: rgba(200,223,240,0.4);
+  color: rgba(100,200,255,0.5);
   flex-shrink: 0;
 }
 
