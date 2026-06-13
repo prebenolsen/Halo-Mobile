@@ -4,12 +4,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const METADATA_SYSTEM =
   'Analyze a user statement and extract memory metadata. ' +
   'Respond ONLY with valid JSON (no markdown, no explanation):\n' +
-  '{"memorable":bool,"memory_types":[],"topics":[],"entities":[],"importance":float,"event_date":null_or_YYYY-MM-DD}\n' +
+  '{"memorable":bool,"memory_types":[],"topics":[],"entities":[],"importance":float,"event_date":null_or_YYYY-MM-DD,"calendar_event":null_or_object}\n' +
   'memory_types choices: idea observation fact preference concern decision future_decision event person_update goal reflection\n' +
   'person_update: use when a named person\'s health, feelings, activities, relationships, or status are described\n' +
   'entities format: [{"type":"person|place|company|product|project","name":"..."}]\n' +
   'importance: 0.1=passing thought, 0.5=useful context, 0.8=significant personal info, 1.0=critical\n' +
-  'event_date: ONLY when the statement explicitly mentions a specific future event with a stated date (e.g. \'my surgery is June 20\'). Never set event_date to today\'s date or any date not explicitly stated in the statement\n' +
+  'event_date: set when the statement references a specific event on a specific date or day (past or future). Resolve relative references using the provided Date (e.g. \'yesterday\' → Date minus 1, \'last Friday\' → compute from Date, \'tomorrow\' → Date plus 1, \'June 20\' → that date in the current or next year). Leave null when no specific date or day is mentioned\n' +
+  'calendar_event: null for general observations and past events. When the statement describes a future or recurring event on a specific date, set to ' +
+  '{"title":"concise event title","time":null_or_"HH:MM","type":"Birthday|Anniversary|Holiday|Meeting|Reminder|Work|Travel|Health","emoji":"single emoji","recurring":true_if_annual}. ' +
+  'Set recurring=true for birthdays and anniversaries. Use null for past events (yesterday, last week, etc.)\n' +
   'memorable=false for: pure commands, simple factual questions, trivial system interactions\n' +
   'memorable=false for: garbled, nonsensical, fragmentary, or incomplete statements (transcription noise, half sentences, word salad)\n' +
   'memorable=true for: personal observations, updates about named people (health, feelings, activities), preferences, plans, life events, ideas\n' +
@@ -115,6 +118,22 @@ serve(async (req: Request) => {
     }).select().single()
 
     if (error) throw error
+
+    // If the LLM identified a future/recurring calendar event, also write to calendar_events
+    const cal = meta.calendar_event as Record<string, unknown> | null | undefined
+    if (cal && typeof cal === 'object' && typeof meta.event_date === 'string') {
+      try {
+        await db.from('calendar_events').insert({
+          title: String(cal.title ?? raw_text).slice(0, 200),
+          date: meta.event_date,
+          time: typeof cal.time === 'string' ? cal.time : null,
+          type: String(cal.type ?? 'Meeting'),
+          emoji: String(cal.emoji ?? '📅'),
+          notes: null,
+          recurring: cal.recurring === true,
+        })
+      } catch { /* calendar insert failure is non-fatal */ }
+    }
 
     return new Response(JSON.stringify(data), {
       headers: { ...CORS, 'content-type': 'application/json' },
