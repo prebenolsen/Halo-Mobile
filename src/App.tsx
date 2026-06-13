@@ -18,7 +18,7 @@ export default function App() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
 
-  const { events, eventsForMonth, loading: calLoading, viewYear, viewMonth, navigate } = useCalendar()
+  const { events, eventsForMonth, loading: calLoading, viewYear, viewMonth, navigate, refetch: refetchCalendar } = useCalendar()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -39,7 +39,7 @@ export default function App() {
     setNoteOpen(false)
     setSaveError(null)
 
-    const { error } = await supabase.functions.invoke('enrich-memory', {
+    const { data, error } = await supabase.functions.invoke('enrich-memory', {
       body: { raw_text: text, source: 'pwa' },
     })
 
@@ -48,6 +48,10 @@ export default function App() {
     } else {
       setFlash(true)
       setTimeout(() => setFlash(false), 2500)
+      // Immediately refresh the calendar if a new event was created
+      if (data?.calendar_inserted) {
+        void refetchCalendar()
+      }
     }
   }
 

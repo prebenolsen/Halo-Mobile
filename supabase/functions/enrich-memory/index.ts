@@ -137,28 +137,32 @@ serve(async (req: Request) => {
 
     if (error) throw error
 
-    // Write to calendar_events whenever memory is an event with a date.
-    // Use calendar_event fields from LLM if provided; otherwise derive from raw_text.
-    const isEvent = Array.isArray(meta.memory_types) &&
-      (meta.memory_types as string[]).includes('event') &&
-      typeof meta.event_date === 'string'
-    if (isEvent) {
+    // Write to calendar_events when the LLM returns a calendar_event object AND resolved a date.
+    // We use calendar_event presence (not memory_types) as the trigger because the LLM reliably
+    // populates calendar_event for future/recurring events even when it omits 'event' from memory_types.
+    const cal = meta.calendar_event as Record<string, unknown> | null | undefined
+    const hasCal = cal !== null && cal !== undefined && typeof cal === 'object'
+    const eventDate = typeof meta.event_date === 'string' ? meta.event_date : null
+    let calendarInserted = false
+
+    if (hasCal && eventDate) {
       try {
-        const cal = meta.calendar_event as Record<string, unknown> | null | undefined
         const calType = (cal?.type && typeof cal.type === 'string') ? cal.type : 'Meeting'
-        await db.from('calendar_events').insert({
+        const { error: calErr } = await db.from('calendar_events').insert({
           title: (cal?.title && typeof cal.title === 'string' ? cal.title : raw_text).slice(0, 200),
-          date: meta.event_date as string,
+          date: eventDate,
           time: (cal?.time && typeof cal.time === 'string') ? cal.time : extractTime(raw_text),
           type: calType,
           emoji: (cal?.emoji && typeof cal.emoji === 'string') ? cal.emoji : (EMOJI_DEFAULTS[calType] ?? '📅'),
           notes: null,
+          source: 'pwa',
           recurring: cal?.recurring === true,
         })
+        if (!calErr) calendarInserted = true
       } catch { /* calendar insert failure is non-fatal */ }
     }
 
-    return new Response(JSON.stringify(data), {
+    return new Response(JSON.stringify({ entry: data, calendar_inserted: calendarInserted }), {
       headers: { ...CORS, 'content-type': 'application/json' },
     })
   } catch (err) {
