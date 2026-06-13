@@ -185,7 +185,7 @@ serve(async (req: Request) => {
           type: calType,
           emoji: (cal?.emoji && typeof cal.emoji === 'string') ? cal.emoji : (EMOJI_DEFAULTS[calType] ?? '📅'),
           notes: null,
-          recurring: cal?.recurring === true,
+          recurring: (cal?.recurring === true) ? 1 : 0,
         })
         if (calErr) calendarError = calErr.message
         else calendarInserted = true
