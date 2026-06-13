@@ -43,6 +43,24 @@ function today(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Oslo' })
 }
 
+function extractTime(text: string): string | null {
+  // "at 18:00" or "at 10:00"
+  let m = text.match(/\bat\s+(\d{1,2}):(\d{2})\b/i)
+  if (m) return `${m[1].padStart(2, '0')}:${m[2]}`
+  // "at 1800" (military without colon)
+  m = text.match(/\bat\s+(\d{4})\b/i)
+  if (m) return `${m[1].slice(0, 2)}:${m[1].slice(2)}`
+  // "at 10" (bare hour)
+  m = text.match(/\bat\s+(\d{1,2})\b/i)
+  if (m) return `${m[1].padStart(2, '0')}:00`
+  return null
+}
+
+const EMOJI_DEFAULTS: Record<string, string> = {
+  Birthday: '🎂', Anniversary: '💒', Holiday: '🎉',
+  Meeting: '📅', Reminder: '🔔', Work: '💼', Travel: '✈️', Health: '🏥',
+}
+
 async function extractMetadata(rawText: string, openaiKey: string): Promise<Record<string, unknown>> {
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -53,7 +71,7 @@ async function extractMetadata(rawText: string, openaiKey: string): Promise<Reco
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 256,
+        max_tokens: 512,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: METADATA_SYSTEM },
@@ -119,18 +137,23 @@ serve(async (req: Request) => {
 
     if (error) throw error
 
-    // If the LLM identified a future/recurring calendar event, also write to calendar_events
-    const cal = meta.calendar_event as Record<string, unknown> | null | undefined
-    if (cal && typeof cal === 'object' && typeof meta.event_date === 'string') {
+    // Write to calendar_events whenever memory is an event with a date.
+    // Use calendar_event fields from LLM if provided; otherwise derive from raw_text.
+    const isEvent = Array.isArray(meta.memory_types) &&
+      (meta.memory_types as string[]).includes('event') &&
+      typeof meta.event_date === 'string'
+    if (isEvent) {
       try {
+        const cal = meta.calendar_event as Record<string, unknown> | null | undefined
+        const calType = (cal?.type && typeof cal.type === 'string') ? cal.type : 'Meeting'
         await db.from('calendar_events').insert({
-          title: String(cal.title ?? raw_text).slice(0, 200),
-          date: meta.event_date,
-          time: typeof cal.time === 'string' ? cal.time : null,
-          type: String(cal.type ?? 'Meeting'),
-          emoji: String(cal.emoji ?? '📅'),
+          title: (cal?.title && typeof cal.title === 'string' ? cal.title : raw_text).slice(0, 200),
+          date: meta.event_date as string,
+          time: (cal?.time && typeof cal.time === 'string') ? cal.time : extractTime(raw_text),
+          type: calType,
+          emoji: (cal?.emoji && typeof cal.emoji === 'string') ? cal.emoji : (EMOJI_DEFAULTS[calType] ?? '📅'),
           notes: null,
-          recurring: cal.recurring === true,
+          recurring: cal?.recurring === true,
         })
       } catch { /* calendar insert failure is non-fatal */ }
     }
