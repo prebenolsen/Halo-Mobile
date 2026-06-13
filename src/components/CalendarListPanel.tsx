@@ -80,17 +80,22 @@ function DropUpSection({ label, count, open, onToggle, children }: {
 }) {
   return (
     <div className="mob-cal-dropup">
-      {open && (
+      {open ? (
         <div className="mob-cal-dropup__content">
-          <div className="mob-cal-list-divider">{label}</div>
+          <div className="mob-cal-list-divider mob-cal-list-divider--toggle" onClick={onToggle}>
+            <span>{label}</span>
+            <span className="mob-cal-dropup__count">{count}</span>
+            <span className="mob-cal-dropup__arrow">▼</span>
+          </div>
           {children}
         </div>
+      ) : (
+        <button className="mob-cal-dropup__toggle" onClick={onToggle}>
+          <span>{label}</span>
+          <span className="mob-cal-dropup__count">{count}</span>
+          <span className="mob-cal-dropup__arrow">▲</span>
+        </button>
       )}
-      <button className="mob-cal-dropup__toggle" onClick={onToggle}>
-        <span>{label}</span>
-        <span className="mob-cal-dropup__count">{count}</span>
-        <span className="mob-cal-dropup__arrow">{open ? '▼' : '▲'}</span>
-      </button>
     </div>
   )
 }

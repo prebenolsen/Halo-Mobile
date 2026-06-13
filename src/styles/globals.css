@@ -443,6 +443,13 @@ html, body, #root {
   margin-bottom: 2px;
 }
 
+.mob-cal-list-divider--toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 .mob-cal-list-item {
   display: flex;
   align-items: center;
