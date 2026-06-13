@@ -1,18 +1,18 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// Exact same prompt as Halo's memory_engine/pipeline.py _METADATA_SYSTEM
 const METADATA_SYSTEM =
   'Analyze a user statement and extract memory metadata. ' +
   'Respond ONLY with valid JSON (no markdown, no explanation):\n' +
   '{"memorable":bool,"memory_types":[],"topics":[],"entities":[],"importance":float,"event_date":null_or_YYYY-MM-DD}\n' +
   'memory_types choices: idea observation fact preference concern decision future_decision event person_update goal reflection\n' +
+  'person_update: use when a named person\'s health, feelings, activities, relationships, or status are described\n' +
   'entities format: [{"type":"person|place|company|product|project","name":"..."}]\n' +
   'importance: 0.1=passing thought, 0.5=useful context, 0.8=significant personal info, 1.0=critical\n' +
-  'event_date: only when statement references a specific future event with a clear date\n' +
+  'event_date: ONLY when the statement explicitly mentions a specific future event with a stated date (e.g. \'my surgery is June 20\'). Never set event_date to today\'s date or any date not explicitly stated in the statement\n' +
   'memorable=false for: pure commands, simple factual questions, trivial system interactions\n' +
   'memorable=false for: garbled, nonsensical, fragmentary, or incomplete statements (transcription noise, half sentences, word salad)\n' +
-  'memorable=true for: personal observations, thoughts about people, preferences, plans, life events, ideas\n' +
+  'memorable=true for: personal observations, updates about named people (health, feelings, activities), preferences, plans, life events, ideas\n' +
   'If there is ANY doubt that the statement is a coherent, complete thought, set memorable=false'
 
 function nowOslo(): string {
@@ -92,7 +92,8 @@ serve(async (req: Request) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
     const meta = await extractMetadata(raw_text, openaiKey)
-    const memorable = meta.memorable !== false  // default to true for explicit writes
+    // Explicit user writes are always intentional — skip the memorable gate
+    // (memorable gate is only meaningful for voice transcription noise in Halo desktop)
 
     const now = nowOslo()
     const db = createClient(supabaseUrl, serviceKey)
@@ -100,16 +101,15 @@ serve(async (req: Request) => {
     const { data, error } = await db.from('memory_entries').insert({
       raw_text,
       source,
-      memory_types: JSON.stringify(memorable ? (meta.memory_types ?? []) : []),
-      topics: JSON.stringify(memorable ? (meta.topics ?? []) : []),
+      memory_types: JSON.stringify(meta.memory_types ?? []),
+      topics: JSON.stringify(meta.topics ?? []),
       entities: JSON.stringify(
-        memorable
-          ? (Array.isArray(meta.entities) ? meta.entities.filter((e: unknown) =>
-              typeof e === 'object' && e !== null && 'name' in e) : [])
+        Array.isArray(meta.entities)
+          ? meta.entities.filter((e: unknown) => typeof e === 'object' && e !== null && 'name' in e)
           : []
       ),
       importance: typeof meta.importance === 'number' ? meta.importance : 0.5,
-      event_date: memorable && typeof meta.event_date === 'string' ? meta.event_date : null,
+      event_date: typeof meta.event_date === 'string' ? meta.event_date : null,
       created_at: now,
       updated_at: now,
     }).select().single()
