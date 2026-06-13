@@ -17,7 +17,7 @@ const C = {
 }
 
 const CFG = {
-  RADIUS: 80,
+  RADIUS: 48,
   CORE_SEGMENTS: 192,
   SHELL_SEGMENTS: 128,
   FOV: 40,
