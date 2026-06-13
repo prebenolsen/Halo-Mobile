@@ -158,6 +158,10 @@ html, body, #root {
   z-index: 200;
   animation: flash-pop 2.5s ease-out forwards;
   pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 20px;
 }
 
 .memory-flash__icon {

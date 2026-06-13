@@ -5,6 +5,7 @@ import type { CalendarEvent } from '../types'
 export function useCalendar() {
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(false)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [view, setView] = useState({
     year: new Date().getFullYear(),
     month: new Date().getMonth() + 1,
@@ -12,12 +13,15 @@ export function useCalendar() {
 
   const fetchEvents = useCallback(async () => {
     setLoading(true)
+    setFetchError(null)
     try {
       const { data, error } = await supabase
         .from('calendar_events')
         .select('*')
         .order('date', { ascending: true })
-      if (!error && data) {
+      if (error) {
+        setFetchError(error.message)
+      } else if (data) {
         setEvents(
           data.map(r => ({
             id: r.id as number,
@@ -32,8 +36,8 @@ export function useCalendar() {
           }))
         )
       }
-    } catch {
-      // silently ignore — calendar is best-effort
+    } catch (e) {
+      setFetchError(String(e))
     } finally {
       setLoading(false)
     }
@@ -63,6 +67,7 @@ export function useCalendar() {
     events,
     eventsForMonth,
     loading,
+    fetchError,
     viewYear: view.year,
     viewMonth: view.month,
     navigate,

@@ -15,21 +15,24 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [noteOpen, setNoteOpen] = useState(false)
   const [flash, setFlash] = useState(false)
+  const [calendarFlash, setCalendarFlash] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
 
-  const { events, eventsForMonth, loading: calLoading, viewYear, viewMonth, navigate, refetch: refetchCalendar } = useCalendar()
+  const { events, eventsForMonth, loading: calLoading, fetchError: calFetchError, viewYear, viewMonth, navigate, refetch: refetchCalendar } = useCalendar()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setLoading(false)
+      if (session) void refetchCalendar()
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
+      if (session) void refetchCalendar()
     })
     return () => subscription.unsubscribe()
-  }, [])
+  }, [refetchCalendar])
 
   const openNote = () => {
     if (!noteOpen && !calendarOpen) setNoteOpen(true)
@@ -46,12 +49,12 @@ export default function App() {
     if (error) {
       setSaveError('Failed to save note.')
     } else {
+      const calInserted = !!data?.calendar_inserted
       setFlash(true)
-      setTimeout(() => setFlash(false), 2500)
-      // Immediately refresh the calendar if a new event was created
-      if (data?.calendar_inserted) {
-        void refetchCalendar()
-      }
+      setCalendarFlash(calInserted)
+      setTimeout(() => { setFlash(false); setCalendarFlash(false) }, 2500)
+      if (data?.calendar_error) setSaveError(`Calendar save failed: ${data.calendar_error}`)
+      if (calInserted) void refetchCalendar()
     }
   }
 
@@ -102,10 +105,15 @@ export default function App() {
       {noteOpen && (
         <NoteInput onSave={saveNote} onDismiss={() => setNoteOpen(false)} />
       )}
-      <MemoryFlash visible={flash} />
+      <MemoryFlash visible={flash} withCalendar={calendarFlash} />
       {saveError && (
         <div className="save-error" onClick={e => { e.stopPropagation(); setSaveError(null) }}>
           {saveError}
+        </div>
+      )}
+      {calFetchError && (
+        <div className="save-error" onClick={e => e.stopPropagation()}>
+          Calendar: {calFetchError}
         </div>
       )}
       <button

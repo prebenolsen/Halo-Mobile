@@ -43,16 +43,44 @@ function today(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Oslo' })
 }
 
+function to24h(h: number, meridiem: string): number {
+  const pm = meridiem.toLowerCase() === 'pm'
+  if (pm && h !== 12) return h + 12
+  if (!pm && h === 12) return 0
+  return h
+}
+
 function extractTime(text: string): string | null {
-  // "at 18:00" or "at 10:00"
-  let m = text.match(/\bat\s+(\d{1,2}):(\d{2})\b/i)
+  // "at HH:MM am/pm"
+  let m = text.match(/\bat\s+(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
+  if (m) {
+    const h = to24h(parseInt(m[1]), m[3])
+    return `${String(h).padStart(2, '0')}:${m[2]}`
+  }
+  // "at HH:MM" (24-hour)
+  m = text.match(/\bat\s+(\d{1,2}):(\d{2})\b/i)
   if (m) return `${m[1].padStart(2, '0')}:${m[2]}`
+  // "at H am/pm" — e.g. "at 8 pm" → "20:00"
+  m = text.match(/\bat\s+(\d{1,2})\s*(am|pm)\b/i)
+  if (m) {
+    const h = to24h(parseInt(m[1]), m[2])
+    return `${String(h).padStart(2, '0')}:00`
+  }
   // "at 1800" (military without colon)
   m = text.match(/\bat\s+(\d{4})\b/i)
   if (m) return `${m[1].slice(0, 2)}:${m[1].slice(2)}`
-  // "at 10" (bare hour)
+  // "at 10" (bare hour, 24-hour assumed)
   m = text.match(/\bat\s+(\d{1,2})\b/i)
   if (m) return `${m[1].padStart(2, '0')}:00`
+  // "H:MM am/pm" without "at" — e.g. "16:00" or "8:00 pm"
+  m = text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
+  if (m) {
+    const h = to24h(parseInt(m[1]), m[3])
+    return `${String(h).padStart(2, '0')}:${m[2]}`
+  }
+  // "H:MM" without "at" (24-hour) — e.g. "16:00"
+  m = text.match(/\b(\d{1,2}):(\d{2})\b/)
+  if (m) return `${m[1].padStart(2, '0')}:${m[2]}`
   return null
 }
 
@@ -146,6 +174,7 @@ serve(async (req: Request) => {
 
     // Insert into calendar_events when the LLM returns a calendar_event object, OR when
     // memory_types includes 'event' and we have a date (fallback for when LLM skips calendar_event).
+    let calendarError: string | null = null
     if (eventDate && (hasCal || isEvent)) {
       try {
         const calType = (cal?.type && typeof cal.type === 'string') ? cal.type : 'Meeting'
@@ -156,14 +185,14 @@ serve(async (req: Request) => {
           type: calType,
           emoji: (cal?.emoji && typeof cal.emoji === 'string') ? cal.emoji : (EMOJI_DEFAULTS[calType] ?? '📅'),
           notes: null,
-          source: 'pwa',
           recurring: cal?.recurring === true,
         })
-        if (!calErr) calendarInserted = true
-      } catch { /* calendar insert failure is non-fatal */ }
+        if (calErr) calendarError = calErr.message
+        else calendarInserted = true
+      } catch (e) { calendarError = String(e) }
     }
 
-    return new Response(JSON.stringify({ entry: data, calendar_inserted: calendarInserted }), {
+    return new Response(JSON.stringify({ entry: data, calendar_inserted: calendarInserted, calendar_error: calendarError }), {
       headers: { ...CORS, 'content-type': 'application/json' },
     })
   } catch (err) {
