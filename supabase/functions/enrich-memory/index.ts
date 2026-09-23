@@ -43,6 +43,40 @@ function today(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Oslo' })
 }
 
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function normalizeEntities(value: unknown): Array<{ type: string; name: string }> {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item: unknown) => {
+    if (typeof item !== 'object' || item === null) return []
+    const entity = item as Record<string, unknown>
+    if (typeof entity.name !== 'string' || !entity.name.trim()) return []
+    return [{
+      type: typeof entity.type === 'string' && entity.type.trim() ? entity.type : 'person',
+      name: entity.name.trim(),
+    }]
+  })
+}
+
+function clampImportance(value: unknown): number {
+  const importance = typeof value === 'number' && Number.isFinite(value) ? value : 0.5
+  return Math.max(0.1, Math.min(importance, 1.0))
+}
+
+function parseJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'string') return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 function to24h(h: number, meridiem: string): number {
   const pm = meridiem.toLowerCase() === 'pm'
   if (pm && h !== 12) return h + 12
@@ -116,6 +150,50 @@ async function extractMetadata(rawText: string, openaiKey: string): Promise<Reco
   }
 }
 
+async function answerFromMemories(query: string, db: ReturnType<typeof createClient>, openaiKey: string): Promise<string> {
+  const { data: rows, error } = await db
+    .from('memory_entries')
+    .select('raw_text, memory_types, topics, entities, importance, created_at')
+    .order('created_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const scored = (rows ?? []).map(row => {
+    const searchable = [
+      row.raw_text,
+      ...parseJsonArray(row.topics),
+      ...parseJsonArray(row.entities).flatMap(entity =>
+        typeof entity === 'object' && entity !== null && 'name' in entity
+          ? [String((entity as Record<string, unknown>).name)]
+          : []),
+    ].join(' ').toLowerCase()
+    const score = terms.reduce((total, term) => total + (searchable.includes(term) ? 1 : 0), 0)
+    return { row, score }
+  }).filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || Number(b.row.importance) - Number(a.row.importance))
+    .slice(0, 8)
+
+  const context = scored.length
+    ? scored.map(({ row }) => `- [${String(row.created_at).slice(0, 10)}] ${row.raw_text}`).join('\n')
+    : '(No matching stored memories.)'
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'authorization': `Bearer ${openaiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      max_tokens: 512,
+      messages: [
+        { role: 'system', content: 'Answer using only the supplied stored memories. If they do not answer the question, say so clearly. Do not invent memories.' },
+        { role: 'user', content: `Question: ${query}\n\nStored memories:\n${context}` },
+      ],
+    }),
+  })
+  if (!response.ok) throw new Error('Answer model request failed')
+  const data = await response.json()
+  return data?.choices?.[0]?.message?.content?.trim() || 'I could not find an answer.'
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -128,7 +206,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { raw_text, source = 'pwa' } = await req.json()
+    const { raw_text, source = 'pwa', mode = 'note' } = await req.json()
     if (!raw_text || typeof raw_text !== 'string') {
       return new Response(JSON.stringify({ error: 'raw_text required' }), {
         status: 400, headers: { ...CORS, 'content-type': 'application/json' },
@@ -139,36 +217,84 @@ serve(async (req: Request) => {
     // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are auto-injected by Supabase
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    const db = createClient(supabaseUrl, serviceKey)
+
+    if (mode === 'ask') {
+      const answer = await answerFromMemories(raw_text.trim(), db, openaiKey)
+      return new Response(JSON.stringify({ answer }), {
+        headers: { ...CORS, 'content-type': 'application/json' },
+      })
+    }
 
     const meta = await extractMetadata(raw_text, openaiKey)
     // Explicit user writes are always intentional — skip the memorable gate
     // (memorable gate is only meaningful for voice transcription noise in Halo desktop)
 
     const now = nowOslo()
-    const db = createClient(supabaseUrl, serviceKey)
+    const memoryTypes = stringArray(meta.memory_types)
+    const topics = stringArray(meta.topics)
+    const entities = normalizeEntities(meta.entities)
+    const importance = clampImportance(meta.importance)
+    const eventDate = typeof meta.event_date === 'string' ? meta.event_date : null
+    const entryId = crypto.randomUUID()
 
     const { data, error } = await db.from('memory_entries').insert({
+      id: entryId,
       raw_text,
       source,
-      memory_types: JSON.stringify(meta.memory_types ?? []),
-      topics: JSON.stringify(meta.topics ?? []),
-      entities: JSON.stringify(
-        Array.isArray(meta.entities)
-          ? meta.entities.filter((e: unknown) => typeof e === 'object' && e !== null && 'name' in e)
-          : []
-      ),
-      importance: typeof meta.importance === 'number' ? meta.importance : 0.5,
-      event_date: typeof meta.event_date === 'string' ? meta.event_date : null,
+      memory_types: JSON.stringify(memoryTypes),
+      topics: JSON.stringify(topics),
+      entities: JSON.stringify(entities),
+      importance,
+      event_date: eventDate,
+      metadata_json: JSON.stringify({}),
       created_at: now,
       updated_at: now,
     }).select().single()
 
     if (error) throw error
 
+    // Keep person profile links compatible with Halo's PostgreSQL writer.
+    for (const entity of entities.filter(entity => entity.type === 'person')) {
+      try {
+        const { data: profile, error: profileError } = await db
+          .from('person_profiles')
+          .select('id, memory_ids')
+          .eq('name', entity.name)
+          .maybeSingle()
+        if (profileError) throw profileError
+
+        const memoryIds = Array.isArray(profile?.memory_ids)
+          ? profile.memory_ids.filter((id: unknown): id is string => typeof id === 'string')
+          : typeof profile?.memory_ids === 'string'
+            ? JSON.parse(profile.memory_ids) as string[]
+            : []
+        if (!memoryIds.includes(entryId)) memoryIds.push(entryId)
+
+        if (profile) {
+          const { error: updateError } = await db
+            .from('person_profiles')
+            .update({ memory_ids: JSON.stringify(memoryIds), updated_at: now })
+            .eq('id', profile.id)
+          if (updateError) throw updateError
+        } else {
+          const { error: insertError } = await db.from('person_profiles').insert({
+            id: crypto.randomUUID(),
+            name: entity.name,
+            created_at: now,
+            updated_at: now,
+            memory_ids: JSON.stringify([entryId]),
+            metadata_json: JSON.stringify({}),
+          })
+          if (insertError) throw insertError
+        }
+      } catch {
+        // The memory row remains authoritative if profile enrichment fails.
+      }
+    }
+
     const cal = meta.calendar_event as Record<string, unknown> | null | undefined
     const hasCal = cal !== null && cal !== undefined && typeof cal === 'object'
-    const eventDate = typeof meta.event_date === 'string' ? meta.event_date : null
-    const memoryTypes: string[] = Array.isArray(meta.memory_types) ? meta.memory_types as string[] : []
     const isEvent = memoryTypes.includes('event')
     let calendarInserted = false
 

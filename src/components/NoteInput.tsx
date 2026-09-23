@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 
 interface Props {
-  onSave: (text: string) => void
+  mode: 'note' | 'ask'
+  onSubmit: (text: string) => void
   onDismiss: () => void
 }
 
-export function NoteInput({ onSave, onDismiss }: Props) {
+export function NoteInput({ mode, onSubmit, onDismiss }: Props) {
   const [text, setText] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
 
@@ -17,7 +18,7 @@ export function NoteInput({ onSave, onDismiss }: Props) {
 
   const submit = () => {
     const trimmed = text.trim()
-    if (trimmed) onSave(trimmed)
+    if (trimmed) onSubmit(trimmed)
     else onDismiss()
   }
 
@@ -27,7 +28,7 @@ export function NoteInput({ onSave, onDismiss }: Props) {
         <textarea
           ref={ref}
           className="note-textarea"
-          placeholder="Write a note…"
+          placeholder={mode === 'note' ? 'Write a note…' : 'Ask away'}
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
@@ -39,7 +40,7 @@ export function NoteInput({ onSave, onDismiss }: Props) {
         <div className="note-actions">
           <button className="note-btn note-btn--cancel" onClick={onDismiss}>Cancel</button>
           <button className="note-btn note-btn--save" onClick={submit} disabled={!text.trim()}>
-            Save
+            {mode === 'note' ? 'Save' : 'Ask'}
           </button>
         </div>
       </div>

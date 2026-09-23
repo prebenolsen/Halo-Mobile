@@ -149,6 +149,41 @@ html, body, #root {
 .note-btn--save:disabled { opacity: 0.3; cursor: not-allowed; }
 .note-btn--save:not(:disabled):hover { background: rgba(100,200,255,0.25); }
 
+/* ── Ask output ── */
+.answer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0,0,0,0.72);
+}
+
+.answer-box {
+  width: min(100%, 480px);
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  background: #0a0f1a;
+  border: 1px solid rgba(126,232,255,0.28);
+  border-radius: 16px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-shadow: 0 0 40px rgba(0,0,0,0.45);
+}
+
+.answer-box p {
+  color: #e8f4ff;
+  font-size: 1rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.answer-box .note-btn { align-self: flex-end; }
+
 /* ── Memory flash ── */
 .memory-flash {
   position: fixed;

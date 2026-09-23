@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { MouseEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
 import { useCalendar } from './hooks/useCalendar'
@@ -13,7 +14,8 @@ import './styles/globals.css'
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
-  const [noteOpen, setNoteOpen] = useState(false)
+  const [inputMode, setInputMode] = useState<'note' | 'ask' | null>(null)
+  const [answer, setAnswer] = useState<string | null>(null)
   const [flash, setFlash] = useState(false)
   const [calendarFlash, setCalendarFlash] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -34,16 +36,26 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [refetchCalendar])
 
-  const openNote = () => {
-    if (!noteOpen && !calendarOpen) setNoteOpen(true)
+  const openInput = (event: MouseEvent<HTMLDivElement>) => {
+    if (calendarOpen || inputMode) return
+    setInputMode(event.clientY <= window.innerHeight * 0.2 ? 'ask' : 'note')
   }
 
-  const saveNote = async (text: string) => {
-    setNoteOpen(false)
+  const submitInput = async (text: string) => {
+    const mode = inputMode
+    setInputMode(null)
     setSaveError(null)
+    if (mode === 'ask') {
+      const { data, error } = await supabase.functions.invoke('enrich-memory', {
+        body: { mode, raw_text: text, source: 'pwa' },
+      })
+      if (error) setSaveError('Failed to get an answer.')
+      else setAnswer(typeof data?.answer === 'string' ? data.answer : 'I could not find an answer.')
+      return
+    }
 
     const { data, error } = await supabase.functions.invoke('enrich-memory', {
-      body: { raw_text: text, source: 'pwa' },
+      body: { mode: 'note', raw_text: text, source: 'pwa' },
     })
 
     if (error) {
@@ -62,7 +74,7 @@ export default function App() {
   if (!session) return <LoginScreen />
 
   return (
-    <div className="app" onClick={openNote}>
+    <div className="app" onClick={openInput}>
       <Sun />
 
       {/* Calendar toggle — top-left */}
@@ -102,8 +114,16 @@ export default function App() {
         <div className="calendar-backdrop" onClick={() => setCalendarOpen(false)} />
       )}
 
-      {noteOpen && (
-        <NoteInput onSave={saveNote} onDismiss={() => setNoteOpen(false)} />
+      {inputMode && (
+        <NoteInput mode={inputMode} onSubmit={submitInput} onDismiss={() => setInputMode(null)} />
+      )}
+      {answer && (
+        <div className="answer-overlay" onClick={e => { e.stopPropagation(); setAnswer(null) }}>
+          <div className="answer-box" onClick={e => e.stopPropagation()}>
+            <p>{answer}</p>
+            <button className="note-btn note-btn--cancel" onClick={() => setAnswer(null)}>Close</button>
+          </div>
+        </div>
       )}
       <MemoryFlash visible={flash} withCalendar={calendarFlash} />
       {saveError && (
