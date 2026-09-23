@@ -32,3 +32,6 @@ noise before storage, but the resulting database row shape is identical.
 - Clicking the top 20% opens the ask input with `Ask away`. Submitting it
 	searches stored memories and returns an LLM-grounded answer without storing
 	the question as a memory.
+- Entering `/memories` in the ask input opens the memory browser. You can
+	search the loaded memories, edit their original text, or delete them
+	permanently. Editing re-runs metadata enrichment and refreshes person links.

@@ -6,6 +6,8 @@ import { useCalendar } from './hooks/useCalendar'
 import { LoginScreen } from './components/LoginScreen'
 import { Sun } from './components/Sun'
 import { NoteInput } from './components/NoteInput'
+import { MemoryViewer } from './components/MemoryViewer'
+import type { MemoryEntry } from './components/MemoryViewer'
 import { MemoryFlash } from './components/MemoryFlash'
 import { CalendarPanel } from './components/CalendarPanel'
 import { CalendarListPanel } from './components/CalendarListPanel'
@@ -16,6 +18,11 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [inputMode, setInputMode] = useState<'note' | 'ask' | null>(null)
   const [answer, setAnswer] = useState<string | null>(null)
+  const [memoryViewerOpen, setMemoryViewerOpen] = useState(false)
+  const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([])
+  const [memoryQuery, setMemoryQuery] = useState('')
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memoryError, setMemoryError] = useState<string | null>(null)
   const [flash, setFlash] = useState(false)
   const [calendarFlash, setCalendarFlash] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -41,11 +48,32 @@ export default function App() {
     setInputMode(event.clientY <= window.innerHeight * 0.2 ? 'ask' : 'note')
   }
 
+  const openMemories = async (query = '') => {
+    setMemoryViewerOpen(true)
+    setMemoryQuery(query)
+    setMemoryLoading(true)
+    setMemoryError(null)
+    const { data, error } = await supabase.functions.invoke('enrich-memory', {
+      body: { mode: 'memories', query },
+    })
+    if (error) {
+      setMemoryError('Failed to load memories.')
+    } else {
+      setMemoryEntries(Array.isArray(data?.entries) ? data.entries as MemoryEntry[] : [])
+    }
+    setMemoryLoading(false)
+  }
+
   const submitInput = async (text: string) => {
     const mode = inputMode
     setInputMode(null)
     setSaveError(null)
     if (mode === 'ask') {
+      const memoryCommand = text.match(/^\/(?:memory|memories)(?:\s+(.+))?$/i)
+      if (memoryCommand) {
+        await openMemories(memoryCommand[1]?.trim() ?? '')
+        return
+      }
       const { data, error } = await supabase.functions.invoke('enrich-memory', {
         body: { mode, raw_text: text, source: 'pwa' },
       })
@@ -68,6 +96,28 @@ export default function App() {
       if (data?.calendar_error) setSaveError(`Calendar save failed: ${data.calendar_error}`)
       if (calInserted) void refetchCalendar()
     }
+  }
+
+  const deleteMemory = async (id: string) => {
+    const { error } = await supabase.functions.invoke('enrich-memory', {
+      body: { mode: 'delete_memory', id },
+    })
+    if (error) {
+      setMemoryError('Failed to delete memory.')
+      return
+    }
+    setMemoryEntries(entries => entries.filter(entry => entry.id !== id))
+  }
+
+  const updateMemory = async (id: string, text: string) => {
+    const { data, error } = await supabase.functions.invoke('enrich-memory', {
+      body: { mode: 'update_memory', id, raw_text: text, source: 'pwa' },
+    })
+    if (error || !data?.entry) {
+      setMemoryError('Failed to update memory.')
+      return
+    }
+    setMemoryEntries(entries => entries.map(entry => entry.id === id ? data.entry as MemoryEntry : entry))
   }
 
   if (loading) return <div className="splash" />
@@ -124,6 +174,17 @@ export default function App() {
             <button className="note-btn note-btn--cancel" onClick={() => setAnswer(null)}>Close</button>
           </div>
         </div>
+      )}
+      {memoryViewerOpen && (
+        <MemoryViewer
+          entries={memoryEntries}
+          loading={memoryLoading}
+          query={memoryQuery}
+          error={memoryError}
+          onClose={() => setMemoryViewerOpen(false)}
+          onDelete={deleteMemory}
+          onUpdate={updateMemory}
+        />
       )}
       <MemoryFlash visible={flash} withCalendar={calendarFlash} />
       {saveError && (

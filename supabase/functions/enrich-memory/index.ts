@@ -77,6 +77,26 @@ function parseJsonArray(value: unknown): unknown[] {
   }
 }
 
+function memoryEntry(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...row,
+    memory_types: parseJsonArray(row.memory_types),
+    topics: parseJsonArray(row.topics),
+    entities: parseJsonArray(row.entities),
+    metadata_json: parseJsonObject(row.metadata_json),
+  }
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string') return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+  try {
+    const parsed = JSON.parse(value)
+    return typeof parsed === 'object' && parsed !== null ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 function to24h(h: number, meridiem: string): number {
   const pm = meridiem.toLowerCase() === 'pm'
   if (pm && h !== 12) return h + 12
@@ -194,6 +214,80 @@ async function answerFromMemories(query: string, db: ReturnType<typeof createCli
   return data?.choices?.[0]?.message?.content?.trim() || 'I could not find an answer.'
 }
 
+async function listMemories(query: string, db: ReturnType<typeof createClient>): Promise<Record<string, unknown>[]> {
+  const { data: rows, error } = await db
+    .from('memory_entries')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(100)
+  if (error) throw error
+
+  const normalizedQuery = query.trim().toLowerCase()
+  return (rows ?? []).map(row => memoryEntry(row as Record<string, unknown>)).filter(row => {
+    if (!normalizedQuery) return true
+    const searchable = [
+      row.raw_text,
+      ...parseJsonArray(row.topics),
+      ...parseJsonArray(row.entities).flatMap(entity =>
+        typeof entity === 'object' && entity !== null && 'name' in entity
+          ? [String((entity as Record<string, unknown>).name)]
+          : []),
+    ].join(' ').toLowerCase()
+    return searchable.includes(normalizedQuery)
+  })
+}
+
+async function removeProfileMemoryLinks(entryId: string, db: ReturnType<typeof createClient>): Promise<void> {
+  const { data: profiles, error } = await db.from('person_profiles').select('id, memory_ids')
+  if (error) throw error
+  for (const profile of profiles ?? []) {
+    const memoryIds = parseJsonArray(profile.memory_ids).filter((id): id is string => typeof id === 'string' && id !== entryId)
+    if (memoryIds.length !== parseJsonArray(profile.memory_ids).length) {
+      const { error: updateError } = await db
+        .from('person_profiles')
+        .update({ memory_ids: JSON.stringify(memoryIds), updated_at: nowOslo() })
+        .eq('id', profile.id)
+      if (updateError) throw updateError
+    }
+  }
+}
+
+async function linkPersonProfiles(
+  entryId: string,
+  entities: Array<{ type: string; name: string }>,
+  db: ReturnType<typeof createClient>,
+  now: string,
+): Promise<void> {
+  for (const entity of entities.filter(item => item.type === 'person')) {
+    const { data: profile, error: profileError } = await db
+      .from('person_profiles')
+      .select('id, memory_ids')
+      .eq('name', entity.name)
+      .maybeSingle()
+    if (profileError) throw profileError
+
+    const memoryIds = parseJsonArray(profile?.memory_ids).filter((id): id is string => typeof id === 'string')
+    if (!memoryIds.includes(entryId)) memoryIds.push(entryId)
+    if (profile) {
+      const { error: updateError } = await db
+        .from('person_profiles')
+        .update({ memory_ids: JSON.stringify(memoryIds), updated_at: now })
+        .eq('id', profile.id)
+      if (updateError) throw updateError
+    } else {
+      const { error: insertError } = await db.from('person_profiles').insert({
+        id: crypto.randomUUID(),
+        name: entity.name,
+        created_at: now,
+        updated_at: now,
+        memory_ids: JSON.stringify([entryId]),
+        metadata_json: JSON.stringify({}),
+      })
+      if (insertError) throw insertError
+    }
+  }
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -206,8 +300,10 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { raw_text, source = 'pwa', mode = 'note' } = await req.json()
-    if (!raw_text || typeof raw_text !== 'string') {
+    const payload = await req.json()
+    const { raw_text, source = 'pwa', mode = 'note', id = '', query = '' } = payload
+    const textRequired = mode === 'note' || mode === 'ask' || mode === 'update_memory'
+    if (textRequired && (!raw_text || typeof raw_text !== 'string')) {
       return new Response(JSON.stringify({ error: 'raw_text required' }), {
         status: 400, headers: { ...CORS, 'content-type': 'application/json' },
       })
@@ -218,6 +314,49 @@ serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     const db = createClient(supabaseUrl, serviceKey)
+
+    if (mode === 'memories') {
+      const entries = await listMemories(typeof query === 'string' ? query : '', db)
+      return new Response(JSON.stringify({ entries }), {
+        headers: { ...CORS, 'content-type': 'application/json' },
+      })
+    }
+
+    if (mode === 'update_memory') {
+      const entryId = typeof id === 'string' ? id : ''
+      if (!entryId || !raw_text.trim()) throw new Error('id and raw_text are required')
+      const meta = await extractMetadata(raw_text.trim(), openaiKey)
+      const now = nowOslo()
+      const memoryTypes = stringArray(meta.memory_types)
+      const topics = stringArray(meta.topics)
+      const entities = normalizeEntities(meta.entities)
+      const { data, error } = await db.from('memory_entries').update({
+        raw_text: raw_text.trim(),
+        memory_types: JSON.stringify(memoryTypes),
+        topics: JSON.stringify(topics),
+        entities: JSON.stringify(entities),
+        importance: clampImportance(meta.importance),
+        event_date: typeof meta.event_date === 'string' ? meta.event_date : null,
+        updated_at: now,
+      }).eq('id', entryId).select().single()
+      if (error) throw error
+      await removeProfileMemoryLinks(entryId, db)
+      await linkPersonProfiles(entryId, entities, db, now)
+      return new Response(JSON.stringify({ entry: memoryEntry(data as Record<string, unknown>) }), {
+        headers: { ...CORS, 'content-type': 'application/json' },
+      })
+    }
+
+    if (mode === 'delete_memory') {
+      const entryId = typeof id === 'string' ? id : ''
+      if (!entryId) throw new Error('id is required')
+      const { error } = await db.from('memory_entries').delete().eq('id', entryId)
+      if (error) throw error
+      await removeProfileMemoryLinks(entryId, db)
+      return new Response(JSON.stringify({ deleted: true, id: entryId }), {
+        headers: { ...CORS, 'content-type': 'application/json' },
+      })
+    }
 
     if (mode === 'ask') {
       const answer = await answerFromMemories(raw_text.trim(), db, openaiKey)
@@ -255,42 +394,10 @@ serve(async (req: Request) => {
     if (error) throw error
 
     // Keep person profile links compatible with Halo's PostgreSQL writer.
-    for (const entity of entities.filter(entity => entity.type === 'person')) {
-      try {
-        const { data: profile, error: profileError } = await db
-          .from('person_profiles')
-          .select('id, memory_ids')
-          .eq('name', entity.name)
-          .maybeSingle()
-        if (profileError) throw profileError
-
-        const memoryIds = Array.isArray(profile?.memory_ids)
-          ? profile.memory_ids.filter((id: unknown): id is string => typeof id === 'string')
-          : typeof profile?.memory_ids === 'string'
-            ? JSON.parse(profile.memory_ids) as string[]
-            : []
-        if (!memoryIds.includes(entryId)) memoryIds.push(entryId)
-
-        if (profile) {
-          const { error: updateError } = await db
-            .from('person_profiles')
-            .update({ memory_ids: JSON.stringify(memoryIds), updated_at: now })
-            .eq('id', profile.id)
-          if (updateError) throw updateError
-        } else {
-          const { error: insertError } = await db.from('person_profiles').insert({
-            id: crypto.randomUUID(),
-            name: entity.name,
-            created_at: now,
-            updated_at: now,
-            memory_ids: JSON.stringify([entryId]),
-            metadata_json: JSON.stringify({}),
-          })
-          if (insertError) throw insertError
-        }
-      } catch {
-        // The memory row remains authoritative if profile enrichment fails.
-      }
+    try {
+      await linkPersonProfiles(entryId, entities, db, now)
+    } catch {
+      // The memory row remains authoritative if profile enrichment fails.
     }
 
     const cal = meta.calendar_event as Record<string, unknown> | null | undefined
