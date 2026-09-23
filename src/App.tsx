@@ -68,12 +68,13 @@ export default function App() {
     const mode = inputMode
     setInputMode(null)
     setSaveError(null)
+    const memoryCommand = text.match(/^\/(?:memory|memories)(?:\s+(.+))?$/i)
+    if (memoryCommand) {
+      await openMemories(memoryCommand[1]?.trim() ?? '')
+      return
+    }
+
     if (mode === 'ask') {
-      const memoryCommand = text.match(/^\/(?:memory|memories)(?:\s+(.+))?$/i)
-      if (memoryCommand) {
-        await openMemories(memoryCommand[1]?.trim() ?? '')
-        return
-      }
       const { data, error } = await supabase.functions.invoke('enrich-memory', {
         body: { mode, raw_text: text, source: 'pwa' },
       })
